@@ -109,6 +109,21 @@ int main(int argc, char** argv)
     _nh.param("flip_vertical", flip_vertical, false);
     ROS_INFO_STREAM("Flip flip_vertical image is : " << ((flip_vertical)?"true":"false"));
 
+    int rotate_image;
+    _nh.param("rotate_image", rotate_image, 0);
+    if(rotate_image != 0 && std::abs(rotate_image) != 90){
+        ROS_ERROR("rotate_image has to be 90 or -90 degrees");
+    }
+    ROS_INFO_STREAM("Rotate rotate_image is : " << rotate_image << " degree");
+
+    int skip_n;
+    _nh.param("skip", skip_n, 0);
+    ROS_INFO_STREAM("skip images is : " << skip_n);
+
+    std::string format_image;
+    _nh.param("format_image", format_image, std::string("bgr8"));
+    ROS_INFO_STREAM("Format destination is : " << format_image);
+
     // From http://docs.opencv.org/modules/core/doc/operations_on_arrays.html#void flip(InputArray src, OutputArray dst, int flipCode)
     // FLIP_HORIZONTAL == 1, FLIP_VERTICAL == 0 or FLIP_BOTH == -1
     bool flip_image = true;
@@ -137,6 +152,16 @@ int main(int argc, char** argv)
     camera_info_manager::CameraInfoManager cam_info_manager(nh, camera_name, camera_info_url);
     // Get the saved camera info if any
     cam_info_msg = cam_info_manager.getCameraInfo();
+    int frame_num = -1;
+    while(skip_n > 0){
+        cap >> frame;
+        frame_num++;
+        skip_n--;
+        if(frame.empty()) {
+            ROS_WARN("skipped more frames than are avaiable");
+            break;
+        }
+    }
 
     ros::Rate r(fps);
     while (nh.ok()) {
@@ -144,10 +169,26 @@ int main(int argc, char** argv)
         if (pub.getNumSubscribers() > 0){
             // Check if grabbed frame is actually full with some content
             if(!frame.empty()) {
+                // rotate image if necessary
+                if(rotate_image == 90){
+                    //CW
+                    cv::transpose(frame,frame);
+                    cv::flip(frame, frame, 1);
+                }else if(rotate_image == -90){
+                    //CCW
+                    cv::transpose(frame,frame);
+                    cv::flip(frame, frame, 0);
+                }
+
                 // Flip the image if necessary
                 if (flip_image)
                     cv::flip(frame, frame, flip_value);
-                msg = cv_bridge::CvImage(header, "bgr8", frame).toImageMsg();
+
+                if(format_image != "bgr8"){
+                    cvtColor(frame,frame,CV_RGB2GRAY);
+                }
+
+                msg = cv_bridge::CvImage(header, format_image, frame).toImageMsg();
                 // Create a default camera info if we didn't get a stored one on initialization
                 if (cam_info_msg.distortion_model == ""){
                     ROS_WARN_STREAM("No calibration file given, publishing a reasonable default camera info.");
@@ -156,6 +197,7 @@ int main(int argc, char** argv)
                 }
                 // The timestamps are in sync thanks to this publisher
                 pub.publish(*msg, cam_info_msg, ros::Time::now());
+                frame_num++;
             }
 
             ros::spinOnce();
